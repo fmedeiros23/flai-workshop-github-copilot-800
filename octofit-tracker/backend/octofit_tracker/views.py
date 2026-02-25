@@ -1,5 +1,5 @@
 from rest_framework import viewsets
-from rest_framework.decorators import api_view
+from rest_framework.decorators import api_view, action
 from rest_framework.response import Response
 from rest_framework.reverse import reverse
 from .models import User, Team, Activity, LeaderBoard, Workout
@@ -10,6 +10,19 @@ from .serializers import (
     LeaderBoardSerializer,
     WorkoutSerializer,
 )
+import ast
+
+
+def _parse_members(members):
+    if isinstance(members, list):
+        return members
+    if isinstance(members, str):
+        try:
+            result = ast.literal_eval(members)
+            return result if isinstance(result, list) else []
+        except Exception:
+            return []
+    return []
 
 
 @api_view(['GET'])
@@ -26,6 +39,34 @@ def api_root(request, format=None):
 class UserViewSet(viewsets.ModelViewSet):
     queryset = User.objects.all()
     serializer_class = UserSerializer
+
+    @action(detail=True, methods=['post'], url_path='assign_team')
+    def assign_team(self, request, pk=None):
+        user = self.get_object()
+        team_id = request.data.get('team_id')
+
+        # Remove user from all current teams
+        for team in Team.objects.all():
+            members = _parse_members(team.members)
+            if user.username in members:
+                members.remove(user.username)
+                team.members = members
+                team.save()
+
+        # Add to new team if specified
+        if team_id:
+            try:
+                new_team = Team.objects.get(pk=team_id)
+                members = _parse_members(new_team.members)
+                if user.username not in members:
+                    members.append(user.username)
+                    new_team.members = members
+                    new_team.save()
+            except Team.DoesNotExist:
+                return Response({'error': 'Team not found'}, status=404)
+
+        serializer = self.get_serializer(user)
+        return Response(serializer.data)
 
 
 class TeamViewSet(viewsets.ModelViewSet):
